@@ -1,98 +1,80 @@
 # MinjaPhotobooth — Aplikasi Photobooth Mandiri Windows
 
-Selamat datang di repositori resmi **MinjaPhotobooth**, sebuah solusi sistem photobooth mandiri (*self-service*) modern yang dirancang untuk platform Windows 10/11 64-bit dengan antarmuka layar sentuh (*touchscreen*).
+Selamat datang di repositori **MinjaPhotobooth**, sistem photobooth mandiri (*self-service*) modern untuk Windows 10/11 64-bit dengan antarmuka layar sentuh (*touchscreen*).
 
 ---
 
 ## 📌 Ringkasan Proyek
 
-MinjaPhotobooth dibangun menggunakan tumpukan teknologi modern:
-- **Frontend UI:** React 18, TypeScript, Vite, CSS modern yang dioptimalkan untuk layar sentuh landscape.
-- **Desktop Runtime & Backend:** Electron, Node.js dengan jembatan IPC yang bertipe ketat (*strictly typed*).
-- **Penyimpanan Ganda (Offline-First):** SQLite lokal untuk operasional tanpa jeda & antrean sinkronisasi asinkron ke PostgreSQL online.
-- **Integrasi Pembayaran:** QRIS dinamis via Midtrans Snap API dengan verifikasi idempoten.
-- **Kamera Modular:** Antarmuka adapter kamera yang mendukung Webcam USB, Virtual Webcam, dan DSLR (target awal: **Canon EOS 600D**).
-- **Editor & Rendering:** Manipulasi foto (frame, filter, sticker) dan komposit resolusi tinggi 4R (1200x1800 px pada 300 DPI).
-- **Cetak 4R:** Integrasi langsung dengan Windows Print Spooler.
-- **Distribusi Digital:** Galeri privat dengan QR code dinamis serta pengiriman otomatis melalui Meta WhatsApp Cloud API resmi.
-- **Admin Panel Tersembunyi:** Panel pengelolaan aman dengan autentikasi PIN ter-hash (Argon2id) dan laporan transaksi ekspor CSV.
+| Komponen | Teknologi |
+|----------|-----------|
+| **Backend API** | Node.js, Fastify, Prisma ORM, PostgreSQL |
+| **Desktop Client** | Electron, React 18, TypeScript, Vite |
+| **Penyimpanan Lokal** | SQLite (better-sqlite3) — cache offline |
+| **Pembayaran** | Midtrans Snap QRIS |
+| **Distribusi Foto** | Object Storage (S3/R2), QR Code, WhatsApp Cloud API |
+| **Kamera** | Webcam USB, Virtual Webcam, Canon EOS 600D (adapter modular) |
+| **Cetak** | Windows Print Spooler — kertas 4R (10×15 cm, 300 DPI) |
+| **Admin Panel** | Autentikasi PIN (Argon2id), CRUD paket, laporan CSV |
 
 ---
 
-## 📂 Struktur Dokumentasi Proyek
+## 📂 Struktur Dokumentasi
 
-Sebelum mulai menulis kode, proyek ini dipandu oleh tiga dokumen spesifikasi utama:
-
-1. [docs/PRD.md](docs/PRD.md) — *Product Requirements Document*: Menjelaskan kebutuhan bisnis, alur pelanggan (*customer journey*), dan persyaratan fungsional/nonfungsional.
-2. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — *Software Architecture Document*: Arsitektur sistem heksagonal, pola adapter perangkat keras, alur penyimpanan data *offline-first*, dan arsitektur keamanan.
-3. [docs/API_CONTRACT.md](docs/API_CONTRACT.md) — *API & IPC Contract Specification*: Definisi tipe data TypeScript, saluran komunikasi IPC Electron (`window.electronAPI`), dan kontrak webhook Midtrans.
-
----
-
-## 🛠️ Prasyarat Perangkat & Sistem
-
-Sebelum melangkah ke implementasi kode pada Milestone berikutnya, pastikan perangkat Windows Anda telah terpasang:
-1. **Sistem Operasi:** Windows 10 atau 11 (64-bit).
-2. **Node.js:** Versi LTS (Node.js v20.x atau v22.x direkomendasikan).  
-   *Unduh di:* [https://nodejs.org](https://nodejs.org)
-3. **Git for Windows:** Versi 2.40+.  
-   *Unduh di:* [https://git-scm.com](https://git-scm.com)
-4. **Visual Studio Code / Antigravity IDE** dengan ekstensi ESLint dan Prettier.
-5. **Perangkat Keras Pendukung (Diuji bertahap):**
-   - Layar sentuh (*touchscreen*) atau monitor standar + mouse untuk simulasi awal.
-   - Webcam internal/USB atau Canon EOS 600D dengan kabel USB.
-   - Printer foto 4R yang terpasang di driver Windows.
+| Dokumen | Deskripsi |
+|---------|-----------|
+| [docs/PRD.md](docs/PRD.md) | Product Requirements Document — kebutuhan bisnis dan alur pelanggan |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Software Architecture — arsitektur sistem, batas online vs desktop |
+| [docs/API_CONTRACT.md](docs/API_CONTRACT.md) | API Contract — 41 endpoint REST dengan request/response types |
+| [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) | Database Schema — 14 model Prisma (PostgreSQL) + SQLite DDL |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security — autentikasi, hashing, manajemen secret, checklist |
+| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Test Plan — 85+ test cases, strategi mock, pengujian hardware |
+| [docs/MILESTONES.md](docs/MILESTONES.md) | Milestones — 15 tahap pengerjaan (M0-M14) dengan kriteria lulus |
 
 ---
 
-## 🗺️ Roadmap Pengerjaan Bertahap
+## 🛠️ Prasyarat
 
-Pengerjaan dilakukan secara bertahap satu demi satu milestone sesuai aturan workflow:
-**Inspect ➔ Plan ➔ Implement ➔ Test ➔ Review ➔ Document ➔ Commit**
+1. **Sistem Operasi:** Windows 10 atau 11 (64-bit)
+2. **Node.js:** Versi 20 LTS atau lebih baru — [nodejs.org](https://nodejs.org)
+3. **Git:** Versi 2.40+ — [git-scm.com](https://git-scm.com)
+4. **PostgreSQL:** Versi 16 — [postgresql.org](https://www.postgresql.org)
+5. **Editor:** Visual Studio Code / Antigravity IDE dengan ekstensi ESLint dan Prettier
+
+---
+
+## 🗺️ Roadmap Pengerjaan
 
 | Status | Milestone | Deskripsi |
-|:---:|---|---|
-| ✅ **SELESAI** | **Milestone 0: Baseline & Dokumen** | PRD, Arsitektur, Kontrak API/IPC, Git Repository, dan README panduan. |
-| ⏳ **BERIKUTNYA** | **Milestone 1: Scaffolding Proyek** | Inisialisasi Electron + Vite + React + TypeScript, SQLite lokal, dan Typed IPC bridge dasar. |
-| 📋 *Rencana* | **Milestone 2: Touch UI & State Machine** | Alur antarmuka pelanggan (Idle, Pilih Paket, Virtual Keyboard, State Machine). |
-| 📋 *Rencana* | **Milestone 3: Pembayaran QRIS Midtrans** | Adapter Midtrans QRIS, webhook lokal, polling status, proteksi idempoten. |
-| 📋 *Rencana* | **Milestone 4: Pipeline Kamera** | Adapter Webcam, Virtual Webcam, dan Canon EOS 600D, live preview, shutter capture. |
-| 📋 *Rencana* | **Milestone 5: Editor Foto & Renderer 4R** | Editor frame/filter, sticker, dan rendering resolusi tinggi 300 DPI (1200x1800 px). |
-| 📋 *Rencana* | **Milestone 6: Percetakan 4R Windows** | Windows Print Spooler adapter, antrean cetak lokal, penanganan error kertas. |
-| 📋 *Rencana* | **Milestone 7: Distribusi Digital** | QR Galeri privat berbatas waktu dan pengiriman otomatis WhatsApp Cloud API. |
-| 📋 *Rencana* | **Milestone 8: Admin Panel & Keamanan** | Login PIN ter-hash Argon2id, CRUD tarif/branding, analitik, dan ekspor CSV. |
-| 📋 *Rencana* | **Milestone 9: Pengujian & Installer** | Windows packaging (.exe installer), auto-update, dan uji ketahanan aplikasi. |
+|:------:|-----------|-----------|
+| ✅ | **M0** Dokumen Baseline | PRD, Architecture, API Contract, Database Schema, Security, Test Plan |
+| ⏳ | **M1** Backend Scaffolding | Fastify + Prisma + PostgreSQL + health check |
+| 📋 | **M2** Desktop Scaffolding | Electron + Vite + React + SQLite + IPC bridge |
+| 📋 | **M3** Admin & Settings | PIN Argon2id, JWT, CRUD pengaturan |
+| 📋 | **M4** Paket & Template | CRUD paket sesi dan template foto |
+| 📋 | **M5** Sesi & Kalkulasi Harga | Session state machine, server-side pricing |
+| 📋 | **M6** Pembayaran QRIS | Midtrans integration, webhook idempoten |
+| 📋 | **M7** Pipeline Kamera | Webcam, Canon EOS 600D adapter, live preview |
+| 📋 | **M8** Editor & Renderer 4R | Filter, template, Sharp 300 DPI compositor |
+| 📋 | **M9** Pipeline Cetak | Windows Spooler adapter, print queue |
+| 📋 | **M10** Galeri & QR | Object storage, galeri privat, signed URLs |
+| 📋 | **M11** WhatsApp Delivery | WhatsApp Cloud API, delivery queue |
+| 📋 | **M12** Laporan & CSV | Ringkasan pendapatan, audit log, ekspor CSV |
+| 📋 | **M13** Touch UI | Antarmuka pelanggan lengkap, state orchestration |
+| 📋 | **M14** Hardening & Installer | Windows installer, auto-update, kiosk mode |
 
 ---
 
-## 🔍 Cara Menguji Tahap Ini (Milestone 0)
+## ❓ Panduan Pemecahan Masalah
 
-Untuk memastikan tahap dasar (*baseline*) telah selesai dengan benar:
-1. Pastikan folder `docs/` berisi:
-   - `docs/PRD.md`
-   - `docs/ARCHITECTURE.md`
-   - `docs/API_CONTRACT.md`
-2. Pastikan file `.gitignore` dan `README.md` sudah berada di direktori utama (*root*).
-3. Buka terminal Anda (PowerShell atau Git Bash) dan jalankan:
-   ```powershell
-   git status
-   ```
-   Pastikan seluruh dokumen terlacak dengan benar.
+### `node: The term 'node' is not recognized`
+Node.js belum terpasang atau belum terdaftar di PATH Windows.
+1. Unduh Node.js LTS dari [nodejs.org](https://nodejs.org).
+2. Saat instalasi, pastikan opsi *"Add to PATH"* dicentang.
+3. Tutup dan buka kembali terminal.
 
----
+### `git: The term 'git' is not recognized`
+Git belum terpasang. Unduh dari [git-scm.com](https://git-scm.com).
 
-## ❓ Panduan Pemecahan Masalah (Troubleshooting)
-
-### 1. `node : The term 'node' is not recognized...`
-- **Penyebab:** Node.js belum terpasang atau path `C:\Program Files\nodejs` belum terdaftar pada *Environment Variables* Windows (PATH).
-- **Solusi:**
-  1. Unduh installer Node.js LTS dari situs resmi [nodejs.org](https://nodejs.org).
-  2. Jalankan file `.msi` dan pastikan centang opsi *"Add to PATH"* aktif saat instalasi.
-  3. Tutup dan buka kembali jendela terminal/IDE Anda agar perubahan PATH terbaca.
-
-### 2. `git : The term 'git' is not recognized...`
-- **Penyebab:** Git belum terpasang di sistem Windows Anda.
-- **Solusi:** Unduh dan pasang Git for Windows dari [git-scm.com](https://git-scm.com).
-
-### 3. File `.env` tidak sengaja ter-commit ke Git
-- **Pencegahan:** File `.gitignore` sudah dikonfigurasi untuk mencegah file rahasia terunggah. Jangan pernah menggunakan `git add -f .env`.
+### File `.env` ter-commit ke Git
+File `.gitignore` sudah dikonfigurasi untuk mencegah ini. Jangan pernah menggunakan `git add -f .env`.

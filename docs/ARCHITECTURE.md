@@ -1,163 +1,445 @@
 # MINJAPHOTOBOOTH — SOFTWARE ARCHITECTURE DOCUMENT
 
-**Versi:** 1.0  
-**Status:** Baseline Disetujui  
+**Versi:** 2.0  
+**Terakhir diperbarui:** 2026-10-17  
+**Status:** Draft — Menunggu Review  
 **Target Platform:** Windows 10/11 64-bit  
-**Pola Arsitektur:** Hexagonal (Ports & Adapters) + Offline-First Dual Storage  
 
 ---
 
-## 1. Ringkasan Eksekutif & Prinsip Desain
+## 1. Ringkasan Eksekutif
 
-MinjaPhotobooth dirancang sebagai sistem photobooth mandiri (unattended self-service) berbasis desktop Windows. Aplikasi ini harus memiliki keandalan tinggi (high reliability), tahan terhadap gangguan jaringan (fault-tolerant offline-first), serta memiliki antarmuka sentuh (touchscreen) yang mulus tanpa hambatan I/O.
+MinjaPhotobooth terdiri dari dua sistem terpisah yang berkomunikasi satu sama lain:
 
-### Prinsip Utama:
-1. **Separation of Concerns (Pemisahan Tanggung Jawab):** Frontend hanya bertanggung jawab atas penyajian visual dan interaksi pengguna. Semua kalkulasi harga, logika bisnis, dan interaksi perangkat fisik dijalankan di backend/main process.
-2. **Adapter Pattern (Modularitas Perangkat Keras):** Seluruh integrasi eksternal (Kamera, Printer, Payment Gateway, WhatsApp) dienkapsulasi dalam adapter terpisah dengan antarmuka (interface) seragam.
-3. **Zero Secrets in Frontend:** Server key, token API, dan algoritma verifikasi tidak boleh dikirimkan atau diproses pada proses renderer (layar UI).
-4. **Offline-First Resilience:** Transaksi dan sesi tetap dapat beroperasi secara lokal menggunakan SQLite. Jika jaringan terputus, data diantrekan dan disinkronkan ke PostgreSQL online begitu koneksi pulih.
-5. **Idempotent Operations:** Notifikasi pembayaran dan perintah pencetakan harus memiliki kunci idempoten untuk mencegah tagihan ganda atau cetak berulang tanpa izin.
+1. **Backend API Server** — Proses Node.js (Fastify) yang menangani seluruh logika bisnis, database, pembayaran, dan integrasi eksternal.
+2. **Desktop Client** — Aplikasi Electron (React + Vite + TypeScript) yang menampilkan antarmuka touchscreen dan mengelola perangkat keras lokal (kamera, printer).
+
+Pemisahan ini menjamin bahwa:
+- Rahasia (server key, token API) hanya berada di backend dan tidak pernah dikirim ke renderer.
+- Harga dikalkulasi ulang oleh backend; frontend tidak dipercaya.
+- Desktop client hanya mengirim request HTTP ke backend dan menerima response terstruktur.
+- Perangkat keras lokal (kamera, printer) dikelola oleh desktop service, bukan oleh backend API.
 
 ---
 
-## 2. Diagram Arsitektur Sistem
+## 2. Prinsip Desain
+
+| # | Prinsip | Penjelasan |
+|---|---------|------------|
+| 1 | **Separation of Concerns** | Frontend menampilkan UI. Backend menghitung harga dan memvalidasi status. Desktop service mengelola hardware. |
+| 2 | **Zero Secrets in Frontend** | Midtrans Server Key, WhatsApp Token, database password tidak pernah ada di Electron renderer atau preload. |
+| 3 | **Server-Side Price Authority** | Client mengirim `packageId` dan `additionalPrints`. Backend mengambil harga dari database dan menghitung total. Client tidak mengirim harga. |
+| 4 | **Payment Verification by Backend** | Sesi kamera hanya aktif setelah backend memvalidasi status `settlement` dari Midtrans. Redirect atau tampilan QRIS di frontend bukan bukti pembayaran. |
+| 5 | **Adapter Pattern** | Setiap integrasi eksternal (Midtrans, WhatsApp, Object Storage, DSLR, Printer) dienkapsulasi dalam adapter dengan interface TypeScript. |
+| 6 | **Offline-First Data** | SQLite lokal menyimpan salinan operasional. Sync worker mendorong data ke PostgreSQL saat online. Booth tetap berfungsi tanpa internet. |
+| 7 | **Idempotent Operations** | Webhook Midtrans dan perintah cetak menggunakan kunci idempoten. Notifikasi ganda tidak menyebabkan sesi ganda atau cetak berulang. |
+
+---
+
+## 3. Diagram Arsitektur Sistem
 
 ```mermaid
 graph TB
-    subgraph UI_Layer ["Renderer Process (Layar UI Touchscreen)"]
-        UI[React 18 + Vite + TypeScript]
-        FSM[Session State Machine]
-        CanvasView[Photo Editor View]
+    subgraph DesktopApp ["Electron Desktop Client"]
+        Renderer["React UI<br/>(Touchscreen Renderer)"]
+        Preload["Preload Bridge<br/>(contextBridge)"]
+        MainProcess["Electron Main Process"]
+
+        subgraph LocalServices ["Desktop-Only Services"]
+            CamService["Camera Service<br/>(Webcam / Canon DSLR)"]
+            PrintService["Printer Service<br/>(Windows Spooler)"]
+            LocalDB["SQLite<br/>(Offline Cache)"]
+        end
     end
 
-    subgraph Bridge_Layer ["Preload Layer (Security Boundary)"]
-        Bridge[contextBridge: window.electronAPI]
-    end
-
-    subgraph Backend_Layer ["Electron Main / Node.js Local Service"]
-        IPC[Typed IPC Controller]
-        Logic[Photobooth Core Engine]
+    subgraph BackendServer ["Fastify API Server (Node.js)"]
+        Router["Fastify Router<br/>+ Auth Middleware"]
         
-        subgraph Adapters ["Hardware & Service Adapters"]
-            CamAdapter[Camera Adapter Interface]
-            PayAdapter[Payment Adapter Interface]
-            PrintAdapter[Printer Adapter Interface]
-            MsgAdapter[Messaging Adapter Interface]
-            StoreAdapter[Storage Adapter Interface]
+        subgraph CoreLogic ["Business Logic Layer"]
+            SessionSvc["Session Service"]
+            PriceSvc["Price Engine"]
+            PaymentSvc["Payment Service"]
+            GallerySvc["Gallery Service"]
+            DeliverySvc["Delivery Service"]
+            AdminSvc["Admin Service"]
+            ReportSvc["Report Service"]
         end
-
-        subgraph Storage ["Dual Data Strategy"]
-            SQLite[(SQLite Local - Outbox Pattern)]
-            SyncWorker[Sync Worker Engine]
+        
+        subgraph Adapters ["External Adapters"]
+            MidtransAdapter["Midtrans QRIS Adapter"]
+            WhatsAppAdapter["WhatsApp Cloud API Adapter"]
+            StorageAdapter["Object Storage Adapter<br/>(S3 / R2)"]
         end
-
-        subgraph Render_Engine ["Image Compositor"]
-            SharpEngine[Sharp / Canvas High-Res 300 DPI]
+        
+        subgraph DataLayer ["Data Layer"]
+            Prisma["Prisma ORM"]
+            PG["PostgreSQL<br/>(Primary Database)"]
         end
     end
 
-    subgraph External_World ["Hardware & Cloud Services"]
-        CamHw[Canon EOS 600D / Webcam]
-        PrinterHw[Windows 4R Printer Spooler]
-        Midtrans[Midtrans QRIS API]
-        WhatsApp[Meta WhatsApp Cloud API]
-        PostgreSQL[(PostgreSQL Cloud Master)]
-        CloudStore[Cloudflare R2 / AWS S3]
+    subgraph ExternalServices ["External Services"]
+        MidtransAPI["Midtrans API"]
+        MetaAPI["Meta WhatsApp API"]
+        ObjStore["Cloudflare R2 / AWS S3"]
     end
 
-    UI --> Bridge
-    Bridge --> IPC
-    IPC --> Logic
-    Logic --> Adapters
-    Logic --> SQLite
-    Logic --> Render_Engine
-    SQLite --> SyncWorker
-    SyncWorker -.-> PostgreSQL
+    Renderer --> Preload
+    Preload --> MainProcess
+    MainProcess -->|"HTTP REST"| Router
+    MainProcess --> CamService
+    MainProcess --> PrintService
+    MainProcess --> LocalDB
 
-    CamAdapter --> CamHw
-    PayAdapter --> Midtrans
-    PrintAdapter --> PrinterHw
-    MsgAdapter --> WhatsApp
-    StoreAdapter --> CloudStore
+    Router --> CoreLogic
+    CoreLogic --> Adapters
+    CoreLogic --> Prisma
+    Prisma --> PG
+
+    MidtransAdapter --> MidtransAPI
+    WhatsAppAdapter --> MetaAPI
+    StorageAdapter --> ObjStore
+
+    MidtransAPI -->|"Webhook POST"| Router
 ```
 
 ---
 
-## 3. Komponen Arsitektur Utama
+## 4. Batas Tanggung Jawab: Online API vs Desktop Service
 
-### 3.1 Renderer Process (Frontend UI)
-- **Teknologi:** React, TypeScript, Vite, Vanilla CSS / Modern UI tokens.
-- **Karakteristik Layar:** Orientasi Landscape, resolusi target 1920x1080 (Full HD) atau 4K, optimasi sentuhan (touch target minimum 48x48 px, feedback audio & visual instan).
-- **Virtual Keyboard:** Keyboard on-screen mandiri untuk input data pelanggan (nomor WhatsApp) tanpa bergantung pada keyboard bawaan Windows yang sering menutup layar.
-- **Tanpa Node.js Integration:** Renderer diisolasi sepenuhnya (`nodeIntegration: false`, `contextIsolation: true`) untuk mencegah eksekusi kode berbahaya dari konten dinamis.
+Ini adalah keputusan arsitektur paling penting. Setiap operasi hanya boleh berjalan pada satu sisi:
 
-### 3.2 Preload Layer (Batas Keamanan & Typed Bridge)
-- Menggunakan `contextBridge.exposeInMainWorld('electronAPI', {...})`.
-- Seluruh channel IPC didefinisikan secara deklaratif dengan tipe data TypeScript dua arah (request & response contracts).
-- Tidak ada akses bebas ke fungsi Node.js (`fs`, `child_process`, `net`) dari jendela browser.
+### 4.1 Backend API Server (Fastify) — ONLINE
 
-### 3.3 Backend Core Service (Electron Main Process)
-- **Session Manager:** Mengatur siklus hidup sesi pelanggan dari mulai hingga reset.
-- **Price Engine:** Menghitung total biaya secara absolut berdasarkan aturan paket di database lokal.
-- **Image Compositor:**
-  - Mengolah foto RAW/JPEG hasil jepretan kamera.
-  - Melakukan koreksi orientasi, filter warna, dan penggabungan dengan template 4R.
-  - Merender output 300 DPI (1200 x 1800 px) secara terpisah di background thread agar tidak membekukan antarmuka.
+Bertanggung jawab atas:
+
+| Domain | Operasi |
+|--------|---------|
+| **Auth** | Verifikasi PIN admin (Argon2id), penerbitan JWT, logout |
+| **Settings** | CRUD pengaturan publik (branding) dan pengaturan admin |
+| **Packages** | CRUD paket sesi (nama, harga, durasi, batas foto) |
+| **Templates** | CRUD template foto (metadata, koordinat slot) |
+| **Sessions** | Membuat sesi, mengubah state, menyelesaikan/membatalkan sesi |
+| **Pricing** | Kalkulasi total harga berdasarkan paket + tambahan cetak |
+| **Payments** | Membuat transaksi Midtrans QRIS, menerima webhook, polling status, verifikasi signature |
+| **Photos** | Menyimpan metadata foto per sesi |
+| **Gallery** | Membuat tautan galeri privat, mengelola token dan retensi |
+| **WhatsApp** | Mengirim pesan melalui WhatsApp Cloud API |
+| **Object Storage** | Upload/download foto ke S3/R2 |
+| **Reports** | Query laporan transaksi, ekspor CSV |
+| **Audit Log** | Mencatat setiap tindakan admin |
+| **Webhooks** | Menerima notifikasi Midtrans dengan verifikasi signature SHA512 |
+| **App Update** | Endpoint cek versi terbaru dan URL download installer |
+
+### 4.2 Desktop Service (Electron Main) — LOKAL
+
+Bertanggung jawab atas:
+
+| Domain | Operasi |
+|--------|---------|
+| **Camera** | Enumerasi perangkat, connect/disconnect, live preview stream, shutter capture |
+| **Printer** | Enumerasi printer Windows, submit print job ke spooler, cek status job |
+| **Local Storage** | SQLite sebagai cache offline (sesi, transaksi, konfigurasi booth) |
+| **Sync Worker** | Menyinkronkan data lokal ke PostgreSQL saat online |
+| **Image Rendering** | Komposit foto + template + filter ke resolusi 4R (300 DPI) menggunakan Sharp |
+| **File Management** | Menyimpan dan menghapus file foto sementara dari disk lokal |
+
+### 4.3 Aturan Komunikasi
+
+```
+┌───────────────────────┐         HTTP REST (JSON)         ┌──────────────────────┐
+│   Desktop Client      │ ──────────────────────────────▶  │  Fastify API Server  │
+│   (Electron)          │ ◀──────────────────────────────  │  (Node.js)           │
+└───────────────────────┘                                  └──────────────────────┘
+       │                                                          │
+       │ IPC (contextBridge)                                      │ Prisma ORM
+       │                                                          │
+       ▼                                                          ▼
+┌───────────────────────┐                                  ┌──────────────────────┐
+│ Camera / Printer /    │                                  │ PostgreSQL           │
+│ SQLite / Sharp        │                                  │ Midtrans / WA / S3   │
+└───────────────────────┘                                  └──────────────────────┘
+```
+
+- Desktop client berkomunikasi ke backend **hanya melalui HTTP REST**.
+- Renderer berkomunikasi ke Electron Main **hanya melalui typed IPC** (contextBridge).
+- Backend tidak pernah mengakses kamera atau printer secara langsung.
+- Desktop tidak pernah mengakses PostgreSQL, Midtrans, atau WhatsApp API secara langsung.
 
 ---
 
-## 4. Arsitektur Data: Offline-First Dual Storage
+## 5. Stack Teknologi Detail
 
-Aplikasi menggunakan strategi penyimpanan ganda (dual-tier storage) untuk menjamin photobooth tetap beroperasi saat internet mall/venue mengalami gangguan:
+### 5.1 Backend API Server
+
+| Komponen | Teknologi | Alasan |
+|----------|-----------|--------|
+| Runtime | Node.js 20 LTS | Stabil, dukungan jangka panjang |
+| Framework | Fastify 5 | Performa tinggi, schema validation bawaan, plugin ecosystem |
+| ORM | Prisma 6 | Type-safe queries, migrasi database terkelola, support PostgreSQL & SQLite |
+| Database | PostgreSQL 16 | ACID compliance, JSON support, scalable |
+| Validasi | Zod + Fastify schemas | Runtime type checking, integrasi TypeScript |
+| Auth | JWT (jsonwebtoken) + Argon2id (argon2) | Stateless auth token, hashing PIN aman |
+| Payments | Midtrans Node.js SDK / HTTP client | Integrasi QRIS resmi |
+| Messaging | WhatsApp Cloud API (axios) | Pengiriman pesan resmi Meta |
+| Storage | AWS SDK v3 / S3-compatible | Upload foto ke object storage |
+| Logging | Pino (bawaan Fastify) | Structured JSON logging |
+| Testing | Vitest + Supertest | Unit test + integration test |
+
+### 5.2 Desktop Client (Electron)
+
+| Komponen | Teknologi | Alasan |
+|----------|-----------|--------|
+| Runtime | Electron 33 | Desktop app packaging untuk Windows |
+| UI | React 18 + TypeScript | Komponen deklaratif, ecosystem luas |
+| Bundler | Vite 6 | Hot module replacement cepat |
+| Styling | Vanilla CSS | Kontrol penuh tanpa overhead framework CSS |
+| Local DB | better-sqlite3 | SQLite sinkron cepat untuk cache lokal |
+| Image | Sharp | Rendering 4R resolusi tinggi (300 DPI) di background |
+| Camera | Adapter: escapi / node-webcam / gphoto2 bridge | Webcam + DSLR support |
+| Printer | Adapter: pdf-to-printer / win32 print API | Windows Print Spooler |
+| IPC | Electron contextBridge + ipcMain/ipcRenderer | Typed communication |
+
+---
+
+## 6. Arsitektur Backend Detail
+
+### 6.1 Struktur Direktori Server
+
+```
+server/
+├── src/
+│   ├── app.ts                  # Fastify instance + plugin registration
+│   ├── server.ts               # Entry point (listen)
+│   ├── config/
+│   │   └── env.ts              # Environment variable loader + validation
+│   ├── routes/
+│   │   ├── admin.routes.ts     # POST /api/admin/login, etc.
+│   │   ├── settings.routes.ts  # GET/PUT /api/settings/*
+│   │   ├── packages.routes.ts  # CRUD /api/packages
+│   │   ├── templates.routes.ts # CRUD /api/templates
+│   │   ├── sessions.routes.ts  # POST/GET /api/sessions
+│   │   ├── payments.routes.ts  # POST /api/payments, GET status
+│   │   ├── photos.routes.ts    # POST /api/photos
+│   │   ├── gallery.routes.ts   # POST /api/gallery, GET /g/:token
+│   │   ├── delivery.routes.ts  # POST /api/delivery/whatsapp
+│   │   ├── reports.routes.ts   # GET /api/reports/*
+│   │   ├── webhooks.routes.ts  # POST /api/webhooks/midtrans
+│   │   └── system.routes.ts    # GET /api/system/version
+│   ├── services/
+│   │   ├── admin.service.ts
+│   │   ├── session.service.ts
+│   │   ├── price.service.ts
+│   │   ├── payment.service.ts
+│   │   ├── photo.service.ts
+│   │   ├── gallery.service.ts
+│   │   ├── delivery.service.ts
+│   │   ├── report.service.ts
+│   │   └── webhook.service.ts
+│   ├── adapters/
+│   │   ├── midtrans.adapter.ts
+│   │   ├── whatsapp.adapter.ts
+│   │   └── storage.adapter.ts
+│   ├── middleware/
+│   │   ├── auth.middleware.ts   # JWT verification
+│   │   └── error.middleware.ts  # Global error handler
+│   ├── schemas/
+│   │   └── *.schema.ts         # Zod schemas per domain
+│   ├── types/
+│   │   └── *.types.ts          # Shared TypeScript types
+│   └── utils/
+│       ├── crypto.ts           # Argon2id, JWT helpers
+│       ├── idempotency.ts      # Duplicate webhook guard
+│       └── signature.ts        # Midtrans signature verifier
+├── prisma/
+│   ├── schema.prisma           # Database schema
+│   └── migrations/             # Auto-generated migrations
+├── .env.example                # Template variabel lingkungan
+├── package.json
+├── tsconfig.json
+└── vitest.config.ts
+```
+
+### 6.2 Alur Request
+
+```mermaid
+sequenceDiagram
+    participant Client as Desktop Client
+    participant Fastify as Fastify Router
+    participant Auth as Auth Middleware
+    participant Service as Business Service
+    participant Prisma as Prisma ORM
+    participant PG as PostgreSQL
+    participant Adapter as External Adapter
+
+    Client->>Fastify: HTTP Request + Bearer JWT
+    Fastify->>Auth: Validate JWT (admin endpoints only)
+    Auth-->>Fastify: Authorized / 401
+    Fastify->>Service: Call service method
+    Service->>Prisma: Query / Mutation
+    Prisma->>PG: SQL
+    PG-->>Prisma: Result
+    
+    opt External call needed
+        Service->>Adapter: Call adapter
+        Adapter-->>Service: External result
+    end
+    
+    Service-->>Fastify: ApiResult<T>
+    Fastify-->>Client: HTTP Response JSON
+```
+
+---
+
+## 7. Arsitektur Data: Dual Storage
+
+### 7.1 PostgreSQL (Primary — Online)
+
+- Dikelola oleh Prisma ORM dengan schema terpusat.
+- Menyimpan seluruh data transaksional, konfigurasi, dan audit log.
+- Diakses hanya oleh Backend API Server, tidak pernah oleh Desktop Client.
+- Mendukung masa depan multi-booth (satu PostgreSQL, banyak booth).
+
+### 7.2 SQLite (Secondary — Offline Cache di Desktop)
+
+- Menyimpan salinan data operasional yang diperlukan saat offline:
+  - Konfigurasi booth (branding, kamera terpilih, printer terpilih).
+  - Daftar paket aktif (cache dari backend).
+  - Status sesi aktif dan antrean cetak.
+  - Antrean sinkronisasi (outbox pattern).
+- Desktop client menulis ke SQLite, lalu sync worker mendorong ke backend API.
+- SQLite **bukan** database utama — hanya cache dan fallback.
+
+### 7.3 Alur Sinkronisasi
+
+```mermaid
+sequenceDiagram
+    participant Desktop as Electron Main
+    participant SQLite as SQLite (Local)
+    participant Sync as Sync Worker
+    participant API as Fastify Backend
+    participant PG as PostgreSQL
+
+    Desktop->>SQLite: Simpan sesi/transaksi lokal
+    Desktop->>SQLite: Tulis ke sync_outbox (status: PENDING)
+    
+    loop Setiap 30 detik
+        Sync->>SQLite: Baca outbox PENDING
+        alt Online
+            Sync->>API: POST /api/sync/batch
+            API->>PG: Upsert data
+            PG-->>API: OK
+            API-->>Sync: 200 OK
+            Sync->>SQLite: Update outbox -> SYNCED
+        else Offline
+            Sync-->>SQLite: Tetap PENDING (retry + backoff)
+        end
+    end
+```
+
+---
+
+## 8. Arsitektur Keamanan (Ringkasan)
+
+Detail lengkap di [SECURITY.md](SECURITY.md). Ringkasan keputusan arsitektur:
+
+1. **PIN Admin:** Hashed dengan Argon2id, salt unik per booth, lockout 10 menit setelah 5 gagal.
+2. **JWT:** Diterbitkan setelah verifikasi PIN, masa berlaku 4 jam, digunakan sebagai Bearer token untuk endpoint admin.
+3. **Midtrans Webhook:** Signature SHA512 diverifikasi di backend. Frontend tidak pernah memproses webhook.
+4. **Galeri Token:** Nanoid 32 karakter (kriptografis), bukan ID sekuensial. Masa berlaku dikonfigurasi admin.
+5. **CORS:** Backend hanya menerima request dari origin desktop app (atau `localhost` saat dev).
+6. **Environment Variables:** Semua secret di `.env`, tidak di source code, tidak di frontend.
+
+---
+
+## 9. Alur Pembayaran (Payment Flow)
+
+Ini adalah alur paling kritis. Tidak boleh ada asumsi bahwa tampilan QRIS = pembayaran berhasil.
 
 ```mermaid
 sequenceDiagram
     participant UI as Touchscreen UI
-    participant Core as Photobooth Core
-    participant LocalDB as SQLite (Local Master)
-    participant Sync as Background Sync Worker
-    participant CloudDB as PostgreSQL (Online Central)
+    participant Electron as Electron Main
+    participant API as Fastify Backend
+    participant Midtrans as Midtrans API
+    participant PG as PostgreSQL
 
-    UI->>Core: Konfirmasi Selesai Sesi
-    Core->>LocalDB: Simpan Transaksi & Sesi (ACID Transaction)
-    Core->>LocalDB: Tulis Event ke Outbox Queue
-    Core-->>UI: Sesi Selesai (Langsung Tampil Cetak & QR)
+    UI->>Electron: Pilih paket, tekan bayar
+    Electron->>API: POST /api/sessions {packageId}
+    API->>PG: Buat session (state: AWAITING_PAYMENT)
+    API->>API: Hitung harga dari DB (BUKAN dari client)
+    API->>Midtrans: Create QRIS transaction
+    Midtrans-->>API: QR string + order_id + expiry
+    API->>PG: Buat Payment record (status: pending)
+    API-->>Electron: {qrString, orderId, grossAmount, expiryTime}
+    Electron-->>UI: Tampilkan QR code di layar
+
+    Note over UI: Pelanggan scan & bayar via e-wallet
     
-    loop Setiap 30 Detik / Event Trigger
-        Sync->>LocalDB: Baca Outbox Queue Status 'PENDING'
-        alt Internet Tersedia
-            Sync->>CloudDB: Kirim Batch Transaksi
-            CloudDB-->>Sync: Acknowledged (200 OK)
-            Sync->>LocalDB: Update Status Outbox 'SYNCED'
-        else Internet Terputus
-            Sync-->>LocalDB: Pertahankan Status 'PENDING' (Retry dengan Backoff)
+    par Webhook dari Midtrans
+        Midtrans->>API: POST /api/webhooks/midtrans {settlement}
+        API->>API: Verifikasi SHA512 signature
+        API->>PG: Cek idempotency (apakah sudah diproses?)
+        alt Belum diproses
+            API->>PG: Update payment -> settlement
+            API->>PG: Update session -> PAYMENT_CONFIRMED
+            API->>PG: Catat webhook event
+        else Sudah diproses
+            API-->>Midtrans: 200 OK (skip)
+        end
+        API-->>Midtrans: 200 OK
+    and Polling dari Desktop
+        loop Setiap 3 detik sampai settle/expire
+            Electron->>API: GET /api/payments/:orderId/status
+            API->>PG: Baca status terkini
+            API-->>Electron: {transactionStatus, isVerified}
+            alt status = settlement
+                Electron-->>UI: Pembayaran berhasil! Mulai sesi kamera
+            else status = expire/cancel/deny
+                Electron-->>UI: Pembayaran gagal, kembali ke pilih paket
+            end
         end
     end
 ```
 
-### 4.1 SQLite (Local Master)
-- **Tujuan:** Sumber data utama saat runtime lokal (Zero Latency, Full Offline Support).
-- **Tabel Utama:**
-  - `sessions`: Status sesi aktif, paket yang dipilih, timestamp.
-  - `photos`: Metadata foto per sesi (path lokal, status terpilih).
-  - `transactions`: ID pesanan, jumlah bayar, metode, status Midtrans.
-  - `print_jobs`: Antrean cetak, jumlah salinan, status spooled/failed.
-  - `admin_configs`: Hash PIN admin, pengaturan branding, parameter hardware.
-  - `sync_outbox`: Antrean pesan untuk sinkronisasi ke cloud PostgreSQL.
-
-### 4.2 PostgreSQL (Online Master)
-- **Tujuan:** Dasbor pusat monitoring multi-booth, konsolidasi laporan keuangan, dan backup analitik.
-- **Komunikasi:** Asinkron via worker pool dengan mekanisme rekonsiliasi otomatis saat koneksi aktif kembali.
+**Aturan kritis:**
+1. Harga dihitung ulang oleh backend dari data paket di database. Client hanya mengirim `packageId`.
+2. Sesi kamera **hanya boleh aktif** setelah backend melaporkan `transactionStatus: "settlement"` dan `isVerified: true`.
+3. Webhook Midtrans diproses secara idempoten. `order_id` yang sudah `settlement` tidak diproses ulang.
+4. Jika webhook terlambat, desktop melakukan polling. Jika polling menunjukkan `settlement`, sesi diaktifkan.
+5. Jika keduanya (webhook + polling) menunjukkan `expire`, sesi dibatalkan.
 
 ---
 
-## 5. Pola Desain Adapter (Hardware & External Services)
+## 10. Adapter Interfaces (Kontrak TypeScript)
 
-Untuk memenuhi aturan nomor 6 dan 7 ("Jangan membuat fungsi perangkat palsu" & "Gunakan adapter/service tersendiri"), setiap modul eksternal mengimplementasikan Interface kontrak formal:
-
-### 5.1 Modul Kamera (`CameraAdapter`)
+### 10.1 Payment Adapter
 ```typescript
-interface ICameraAdapter {
+export interface IPaymentAdapter {
+  createTransaction(params: CreatePaymentParams): Promise<PaymentCreationResult>;
+  getStatus(orderId: string): Promise<PaymentStatusResult>;
+  verifyWebhookSignature(payload: WebhookPayload, serverKey: string): boolean;
+}
+```
+
+### 10.2 Messaging Adapter
+```typescript
+export interface IMessagingAdapter {
+  sendGalleryLink(params: SendMessageParams): Promise<MessageDeliveryResult>;
+}
+```
+
+### 10.3 Storage Adapter
+```typescript
+export interface IStorageAdapter {
+  upload(localPath: string, key: string): Promise<UploadResult>;
+  getSignedUrl(key: string, expiresInSeconds: number): Promise<string>;
+  delete(key: string): Promise<void>;
+}
+```
+
+### 10.4 Camera Adapter (Desktop Only)
+```typescript
+export interface ICameraAdapter {
   listDevices(): Promise<CameraDeviceInfo[]>;
   connect(deviceId: string): Promise<void>;
   disconnect(): Promise<void>;
@@ -167,77 +449,27 @@ interface ICameraAdapter {
   getStatus(): Promise<CameraStatus>;
 }
 ```
-- **Implementasi:**
-  - `WebcamAdapter`: Berbasis WebRTC/DirectShow media API Windows.
-  - `CanonDSLRAdapter`: Komunikasi native USB untuk Canon EOS 600D via EDSDK / gphoto2 CLI bridge terisolasi.
-  - `MockCameraAdapter`: Digunakan khusus unit testing dan lingkungan pengembangan tanpa perangkat fisik.
 
-### 5.2 Modul Pembayaran (`PaymentAdapter`)
+### 10.5 Printer Adapter (Desktop Only)
 ```typescript
-interface IPaymentAdapter {
-  createQRIS(order: PaymentOrder): Promise<QRISPaymentResult>;
-  checkStatus(orderId: string): Promise<PaymentStatusResult>;
-  cancelPayment(orderId: string): Promise<void>;
-}
-```
-- **Implementasi:**
-  - `MidtransPaymentAdapter`: Integrasi Midtrans Snap QRIS API dengan SHA512 signature verification.
-  - `MockPaymentAdapter`: Simulasi pembayaran instan/gagal untuk pengujian otomatis.
-
-### 5.3 Modul Percetakan (`PrinterAdapter`)
-```typescript
-interface IPrinterAdapter {
-  listPrinters(): Promise<PrinterDeviceInfo[]>;
-  print4R(job: PrintJobRequest): Promise<PrintJobResult>;
+export interface IPrinterAdapter {
+  listPrinters(): Promise<PrinterInfo[]>;
+  submitJob(job: PrintJobParams): Promise<PrintJobResult>;
   getJobStatus(jobId: string): Promise<PrintJobStatus>;
 }
 ```
-- **Implementasi:**
-  - `WindowsSpoolerAdapter`: Berkomunikasi langsung dengan Windows Spooler API untuk kertas 4R borderless.
-  - `MockPrinterAdapter`: Memverifikasi pembuatan file spool tanpa menggunakan kertas fisik.
-
-### 5.4 Modul Pesan & Galeri Digital (`MessagingAdapter` & `StorageAdapter`)
-```typescript
-interface IMessagingAdapter {
-  sendPhotoGallery(payload: WhatsAppDeliveryPayload): Promise<DeliveryResult>;
-}
-
-interface IStorageAdapter {
-  uploadSoftFile(localPath: string, key: string): Promise<UploadResult>;
-  generateSignedDownloadUrl(key: string, expiryMinutes: number): Promise<string>;
-}
-```
-- **Implementasi:**
-  - `WhatsAppCloudApiAdapter`: Integrasi resmi Meta Graph API WhatsApp Business.
-  - `S3CloudStorageAdapter`: Mengunggah foto ke S3 / Cloudflare R2 dengan token download berbatas waktu.
 
 ---
 
-## 6. Arsitektur Keamanan & Proteksi Data
+## 11. Keputusan Arsitektur (Architecture Decision Records)
 
-1. **Autentikasi PIN Admin:**
-   - PIN tidak disimpan dalam plaintext.
-   - Menggunakan hashing **Argon2id** dengan salt dinamis unik untuk setiap mesin booth.
-   - Proteksi brute force: Kunci akun otomatis selama 10 menit setelah 5 kali kesalahan beruntun.
-2. **Pengamanan Token & Kredensial:**
-   - Server keys (Midtrans, Meta API, DB Passwords) disimpan dalam file `.env` di direktori aman backend yang tidak dapat diakses dari browser renderer.
-3. **Privasi Galeri Foto Pelanggan:**
-   - Soft file foto hanya dapat diakses melalui URL unik yang memuat kriptografis nonce token (UUID v4 / Nanoid 32 karakter).
-   - Kebijakan retensi otomatis: File dihapus dari penyimpanan cloud setelah waktu retensi tercapai (misal: 48 jam).
-
----
-
-## 7. Roadmap Milestone Pengerjaan
-
-| Milestone | Nama Tahapan | Cakupan Pekerjaan & Deliverables | Kriteria Pengujian (Verification Gate) |
-|---|---|---|---|
-| **M0** | **Baseline & Dokumentasi** | PRD, Arsitektur, API Contract, README, Git baseline | Review struktur dokumen lengkap & valid |
-| **M1** | **Scaffolding Proyek** | Setup Electron + Vite + React + TS, SQLite local setup, Typed IPC bridge | `npm run build`, window terbuka, IPC ping-pong lolos |
-| **M2** | **State Machine & Touch UI** | Alur sesi UI (Idle, Paket, Editor, Review), Virtual Numpad | Navigasi layar mulus tanpa error state |
-| **M3** | **Modul Pembayaran QRIS** | Midtrans QRIS Adapter, Mock Payment, Webhook & Polling reconciler | Transaksi pending -> bayar -> sesi aktif secara idempotent |
-| **M4** | **Pipeline Kamera** | CameraAdapter (Webcam, Canon EOS 600D, Mock), live preview, capture | Preview 30fps tampil, shutter menyimpan file RAW/JPEG |
-| **M5** | **Editor & 4R Compositor** | Filter, template frame PNG, sticker, Sharp 300 DPI export | Output file 1200x1800 px sRGB presisi tanpa artefak |
-| **M6** | **Pipeline Cetak 4R** | Windows Printer Spooler Adapter, print queue, status printer | Job masuk ke spooler Windows, test print valid |
-| **M7** | **Distribusi Digital** | Cloud Storage Adapter, QR Galeri privat, WhatsApp Cloud API | QR dapat dipindai ponsel, WA pesan terkirim |
-| **M8** | **Admin Panel & Security** | PIN Argon2id, CRUD paket/branding, Laporan audit, Ekspor CSV | Brute force terblokir, perubahan setting tersimpan |
-| **M9** | **Hardening & Installer** | Windows installer (.exe), crash recovery, auto-updater | Installer berjalan bersih, data tidak hilang saat update |
+| # | Keputusan | Alasan | Alternatif Ditolak |
+|---|-----------|--------|-------------------|
+| ADR-01 | Fastify sebagai framework backend | Performa tinggi, schema validation bawaan, plugin ecosystem matang | Express (lebih lambat, tanpa schema validation) |
+| ADR-02 | Prisma ORM | Type-safe, migrasi terkelola, mendukung PostgreSQL + SQLite | TypeORM (API kurang intuitif), Knex (tanpa type safety) |
+| ADR-03 | Backend terpisah dari Electron Main | Keamanan (secret isolation), testability, dan skalabilitas multi-booth | Semua logika di Electron Main (sulit ditest, secret terekspos) |
+| ADR-04 | JWT untuk sesi admin | Stateless, tidak perlu session store di server | Session cookies (memerlukan state server-side) |
+| ADR-05 | SQLite sebagai cache offline | Zero-latency reads, booth tetap beroperasi tanpa internet | Hanya PostgreSQL (booth mati saat offline) |
+| ADR-06 | Polling + Webhook untuk payment verification | Redundansi: webhook cepat, polling sebagai fallback | Hanya webhook (rentan jika webhook terlambat) |
+| ADR-07 | Object storage (S3/R2) untuk foto galeri | Scalable, CDN-ready, retensi otomatis via lifecycle rules | Serve dari backend (bottleneck bandwidth) |
+| ADR-08 | Sharp untuk rendering 4R | Native performance, tidak bergantung pada resolusi layar | Canvas di browser (terbatas oleh resolusi monitor) |
