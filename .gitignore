@@ -1,0 +1,52 @@
+# Dependensi Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Konfigurasi Lingkungan & Rahasia (DILARANG COMMIT)
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+
+# Hasil Kompilasi & Build
+dist/
+dist-electron/
+out/
+build/
+release/
+*.exe
+*.msi
+*.zip
+
+# Database Lokal & Penyimpanan File Sementara
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+storage/temp/
+storage/photos/
+storage/prints/
+storage/exports/
+
+# Cache IDE & Editor
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# File Sistem Operasi
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Log Sistem
+logs/
+*.log
