@@ -30,6 +30,7 @@ Selamat datang di repositori **MinjaPhotobooth**, sistem photobooth mandiri (*se
 | [docs/SECURITY.md](docs/SECURITY.md) | Security — autentikasi, hashing, manajemen secret, checklist |
 | [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Test Plan — 85+ test cases, strategi mock, pengujian hardware |
 | [docs/MILESTONES.md](docs/MILESTONES.md) | Milestones — 15 tahap pengerjaan (M0-M14) dengan kriteria lulus |
+| [docs/THE_NEXT_STEP.md](docs/THE_NEXT_STEP.md) | The Next Step — Blueprint integrasi printer fisik, kamera, Midtrans & Electron |
 
 ---
 

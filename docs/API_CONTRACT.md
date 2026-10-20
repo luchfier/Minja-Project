@@ -112,13 +112,23 @@ export enum ErrorCode {
   TEMPLATE_NOT_FOUND = "TEMPLATE_NOT_FOUND",
   TEMPLATE_INACTIVE = "TEMPLATE_INACTIVE",
 
-  // === Payment ===
+  // === Payment & Cash ===
   PAYMENT_CREATION_FAILED = "PAYMENT_CREATION_FAILED",
   PAYMENT_NOT_FOUND = "PAYMENT_NOT_FOUND",
   PAYMENT_ALREADY_SETTLED = "PAYMENT_ALREADY_SETTLED",
   PAYMENT_EXPIRED = "PAYMENT_EXPIRED",
   PAYMENT_DENIED = "PAYMENT_DENIED",
   INVALID_WEBHOOK_SIGNATURE = "INVALID_WEBHOOK_SIGNATURE",
+  CASH_UNDERPAID = "CASH_UNDERPAID",
+  CASH_CONFIRMATION_FAILED = "CASH_CONFIRMATION_FAILED",
+
+  // === Voucher ===
+  VOUCHER_NOT_FOUND = "VOUCHER_NOT_FOUND",
+  VOUCHER_EXPIRED = "VOUCHER_EXPIRED",
+  VOUCHER_QUOTA_EXCEEDED = "VOUCHER_QUOTA_EXCEEDED",
+  VOUCHER_MIN_NOT_MET = "VOUCHER_MIN_NOT_MET",
+  VOUCHER_PACKAGE_INELIGIBLE = "VOUCHER_PACKAGE_INELIGIBLE",
+  VOUCHER_INACTIVE = "VOUCHER_INACTIVE",
 
   // === Photo ===
   PHOTO_NOT_FOUND = "PHOTO_NOT_FOUND",
@@ -683,11 +693,11 @@ interface CancelSessionRequest {
 
 ---
 
-### 3.6 Payments (Pembayaran)
+### 3.6 Payments & Cash Desk (Pembayaran & Kasir Tunai)
 
 #### `POST /api/payments`
 
-Membuat transaksi pembayaran Midtrans QRIS untuk sesi.
+Membuat transaksi pembayaran (QRIS Midtrans atau Tunai/Cash) untuk sesi yang sedang berjalan.
 
 **Auth:** X-Booth-Key
 
@@ -695,14 +705,19 @@ Membuat transaksi pembayaran Midtrans QRIS untuk sesi.
 ```typescript
 interface CreatePaymentRequest {
   sessionId: string;
+  paymentMethod: "qris" | "cash";
+  voucherCode?: string;
 }
 ```
 
 **Logika Backend:**
 1. Ambil sesi dari database, pastikan state = `AWAITING_PAYMENT`.
-2. Ambil `totalPrice` dari sesi (sudah dikalkulasi saat sesi dibuat).
-3. Panggil Midtrans API untuk buat transaksi QRIS.
-4. Simpan payment record di database.
+2. Validasi voucher (jika disediakan): hitung subtotal, diskon voucher, biaya add-on cetak, dan gross amount final.
+3. Jika `paymentMethod === "qris"`:
+   - Panggil Midtrans Snap/Core API untuk generate QRIS dinamis (`qrString`, `qrImageUrl`).
+4. Jika `paymentMethod === "cash"`:
+   - Buat order dengan status `pending`, tanpa payload QR. Menunggu konfirmasi staf kasir melalui PIN admin.
+5. Simpan payment record di database.
 
 **Response 201:**
 ```typescript
@@ -710,16 +725,24 @@ interface PaymentDto {
   id: string;
   orderId: string;         // Format: MINJA-{YYYYMMDD}-{sequence}
   sessionId: string;
+  paymentMethod: "qris" | "cash";
+  subtotal: number;
+  voucherCode: string | null;
+  voucherDiscount: number;
   grossAmount: number;
-  qrString: string;        // EMVCo QRIS string untuk render QR di UI
+  qrString: string | null; // EMVCo QRIS string (null jika cash)
   qrImageUrl: string | null;
   transactionStatus: PaymentStatus;
   expiryTime: string;      // ISO 8601
+  changeAmount?: number;
+  confirmedBy?: string;
   createdAt: string;
 }
 ```
 
 ```typescript
+export type PaymentMethod = "qris" | "cash";
+
 export type PaymentStatus =
   | "pending"
   | "settlement"
@@ -729,7 +752,7 @@ export type PaymentStatus =
   | "refund";
 ```
 
-**Errors:** `SESSION_NOT_FOUND`, `INVALID_SESSION_STATE`, `PAYMENT_CREATION_FAILED`
+**Errors:** `SESSION_NOT_FOUND`, `INVALID_SESSION_STATE`, `PAYMENT_CREATION_FAILED`, `VOUCHER_NOT_FOUND`, `VOUCHER_EXPIRED`, `VOUCHER_QUOTA_EXCEEDED`
 
 ---
 
@@ -745,13 +768,13 @@ interface PaymentStatusResponse {
   orderId: string;
   transactionStatus: PaymentStatus;
   settlementTime: string | null;
-  isVerified: boolean;          // true jika backend telah memverifikasi signature
+  isVerified: boolean;          // true jika backend telah memverifikasi (Midtrans webhook/API check atau PIN kasir valid)
 }
 ```
 
 **Catatan tentang isVerified:**
-- `isVerified: true` berarti backend telah memverifikasi status ini dari Midtrans (via webhook signature atau API check).
-- `isVerified: false` berarti status masih `pending` dan belum ada konfirmasi dari Midtrans.
+- `isVerified: true` berarti backend telah memverifikasi status ini (via webhook/API check Midtrans untuk QRIS, atau via autentikasi PIN kasir untuk Cash).
+- `isVerified: false` berarti status masih `pending`.
 - Desktop client **hanya boleh mengaktifkan sesi kamera** jika `transactionStatus === "settlement" && isVerified === true`.
 
 ---
@@ -768,11 +791,244 @@ interface PaymentQueryParams extends PaginationParams {
   startDate?: string;   // YYYY-MM-DD
   endDate?: string;
   status?: PaymentStatus;
+  paymentMethod?: PaymentMethod;
   sessionId?: string;
 }
 ```
 
 **Response 200:** `PaginatedResponse<PaymentDto>`
+
+---
+
+#### `GET /api/admin/cash/pending`
+
+Mengambil antrean transaksi tunai (`paymentMethod: "cash"`) berstatus `pending` yang menunggu pelunasan dari staf kasir.
+
+**Auth:** Bearer JWT
+
+**Response 200:**
+```typescript
+interface CashPendingTransaction {
+  id: string;
+  orderId: string;
+  sessionId: string;
+  packageName: string;
+  subtotal: number;
+  voucherCode: string | null;
+  voucherDiscount: number;
+  grossAmount: number;
+  createdAt: string;
+  status: "pending";
+}
+
+// Response: CashPendingTransaction[]
+```
+
+---
+
+#### `POST /api/admin/cash/confirm`
+
+Konfirmasi pelunasan uang tunai oleh staf kasir menggunakan verifikasi PIN Admin.
+
+**Auth:** X-Booth-Key atau Bearer JWT
+
+**Request Body:**
+```typescript
+interface CashConfirmationRequest {
+  orderId: string;
+  pin: string;              // PIN Admin (misal: 123456)
+  receivedAmount: number;   // Nominal uang fisik yang diserahkan pelanggan
+  operatorId?: string;      // Identitas operator/kasir
+}
+```
+
+**Validasi & Logika Keamanan:**
+1. Verifikasi PIN admin (proteksi anti-brute force, lockout jika 5x gagal).
+2. Periksa apakah transaksi berstatus `pending` dan metode pembayaran adalah `cash`.
+3. Validasi nominal uang:
+   - Jika `receivedAmount < grossAmount`, kembalikan error `CASH_UNDERPAID` (400 Bad Request) dengan selisih kekurangan. Sesi **tidak boleh aktif**.
+   - Jika `receivedAmount >= grossAmount`, hitung `changeAmount = receivedAmount - grossAmount`.
+4. Perbarui status transaksi dan sesi menjadi `settlement` dan `PAYMENT_CONFIRMED`.
+5. Catat event pada Cash Audit Log. **Dilarang keras mencatat PIN petugas ke log atau menyimpannya dalam plaintext.**
+
+**Response 200:**
+```typescript
+interface CashConfirmationResponse {
+  success: boolean;
+  orderId: string;
+  grossAmount: number;
+  receivedAmount: number;
+  changeAmount: number;
+  confirmedBy: string;
+  confirmedAt: string;
+  message: string;
+}
+```
+
+**Errors:** `INVALID_PIN`, `ADMIN_LOCKED_OUT`, `CASH_UNDERPAID`, `PAYMENT_NOT_FOUND`, `PAYMENT_ALREADY_SETTLED`
+
+---
+
+#### `GET /api/admin/cash/audit-logs`
+
+Mengambil catatan audit konfirmasi pembayaran tunai untuk transparansi dan rekapitulasi kasir.
+
+**Auth:** Bearer JWT
+
+**Response 200:**
+```typescript
+interface CashAuditLogItem {
+  id: string;
+  orderId: string;
+  operatorId: string;
+  grossAmount: number;
+  receivedAmount: number;
+  changeAmount: number;
+  confirmedAt: string;
+}
+
+// Response: CashAuditLogItem[]
+```
+
+---
+
+### 3.7 Vouchers (Manajemen Voucher & Kode Promo)
+
+#### `POST /api/vouchers/validate`
+
+Memvalidasi kode voucher promo dan menghitung nilai diskon terhadap paket yang dipilih pelanggan.
+
+**Auth:** Tidak diperlukan (Publik / Desktop)
+
+**Request Body:**
+```typescript
+interface ValidateVoucherRequest {
+  code: string;
+  packageId: string;
+  additionalPrints?: number;
+}
+```
+
+**Logika Backend:**
+1. Cari kode voucher (case-insensitive).
+2. Periksa apakah voucher `isActive: true`.
+3. Periksa masa berlaku (`validFrom <= now <= validUntil`).
+4. Periksa sisa kuota pemakaian (`usedCount < quota`).
+5. Periksa kesesuaian paket (`applicablePackages` jika ditentukan).
+6. Hitung subtotal paket + cetak tambahan. Periksa apakah memenuhi `minTransaction`.
+7. Hitung nilai diskon:
+   - Persentase: `(subtotal * discountValue) / 100`, dibatasi plafon `maxDiscount` (bila ada).
+   - Nominal tetap: `min(subtotal, discountValue)`.
+8. Hitung `grossAmount = max(0, subtotal - discountAmount)`.
+
+**Response 200:**
+```typescript
+interface ValidateVoucherResponse {
+  isValid: boolean;
+  discountAmount: number;
+  voucher?: {
+    code: string;
+    name: string;
+    type: "percentage" | "fixed";
+    discountValue: number;
+    maxDiscount?: number;
+  };
+  errorCode?:
+    | "INVALID_CODE"
+    | "EXPIRED"
+    | "OUT_OF_QUOTA"
+    | "MIN_TRANSACTION_NOT_MET"
+    | "PACKAGE_NOT_ELIGIBLE"
+    | "INACTIVE";
+  errorMessage?: string;
+}
+```
+
+---
+
+#### `GET /api/admin/vouchers`
+
+Mengambil seluruh daftar voucher promo beserta metrik penggunaan.
+
+**Auth:** Bearer JWT
+
+**Response 200:**
+```typescript
+interface VoucherItem {
+  id: string;
+  code: string;
+  name: string;
+  type: "percentage" | "fixed";
+  discountValue: number;
+  maxDiscount?: number;
+  minTransaction?: number;
+  quota: number;
+  usedCount: number;
+  validFrom: string;
+  validUntil: string;
+  applicablePackages?: string[];
+  isActive: boolean;
+  createdAt: string;
+}
+
+// Response: VoucherItem[]
+```
+
+---
+
+#### `POST /api/admin/vouchers`
+
+Membuat voucher promo baru.
+
+**Auth:** Bearer JWT
+
+**Request Body:**
+```typescript
+interface CreateVoucherRequest {
+  code: string;               // 3-20 karakter alfanumerik
+  name: string;               // 1-100 karakter
+  type: "percentage" | "fixed";
+  discountValue: number;      // 1-100 untuk %, >= 500 untuk fixed
+  maxDiscount?: number;       // Plafon rupiah jika type = percentage
+  minTransaction?: number;    // Min total harga sebelum diskon
+  quota: number;              // Kuota penggunaan, min: 1
+  validFrom: string;          // ISO 8601
+  validUntil: string;         // ISO 8601
+  applicablePackages?: string[]; // ID paket (kosong = semua paket)
+  isActive?: boolean;         // Default: true
+}
+```
+
+**Response 201:** `VoucherItem`
+
+**Errors:** `VALIDATION_ERROR`, `CONFLICT` (kode voucher sudah terdaftar)
+
+---
+
+#### `PUT /api/admin/vouchers/:id`
+
+Memperbarui voucher promo yang ada.
+
+**Auth:** Bearer JWT
+
+**Request Body:** Partial dari `CreateVoucherRequest`.
+
+**Response 200:** `VoucherItem`
+
+**Errors:** `NOT_FOUND`, `VALIDATION_ERROR`
+
+---
+
+#### `DELETE /api/admin/vouchers/:id`
+
+Menonaktifkan atau menghapus voucher promo.
+
+**Auth:** Bearer JWT
+
+**Response 200:**
+```typescript
+{ message: "Voucher berhasil dinonaktifkan" }
+```
 
 ---
 
@@ -1161,6 +1417,7 @@ interface TransactionReportParams extends PaginationParams {
   startDate: string;
   endDate: string;
   paymentStatus?: PaymentStatus;
+  paymentMethod?: PaymentMethod;
 }
 ```
 
@@ -1170,12 +1427,17 @@ interface TransactionReportItem {
   orderId: string;
   sessionId: string;
   packageName: string;
+  paymentMethod: PaymentMethod;
+  subtotal: number;
+  voucherCode: string | null;
+  discountAmount: number;
   grossAmount: number;
   paymentStatus: PaymentStatus;
   sessionState: SessionState;
   shotsTaken: number;
   photosPrinted: number;
   printStatus: string;
+  confirmedBy: string | null;
   createdAt: string;
   settlementTime: string | null;
 }
@@ -1298,21 +1560,35 @@ interface HealthResponse {
 | 21 | PATCH | `/api/sessions/:id/state` | Booth-Key | Update state sesi |
 | 22 | POST | `/api/sessions/:id/complete` | Booth-Key | Selesaikan sesi |
 | 23 | POST | `/api/sessions/:id/cancel` | Booth-Key | Batalkan sesi |
-| 24 | POST | `/api/payments` | Booth-Key | Buat pembayaran QRIS |
+| 24 | POST | `/api/payments` | Booth-Key | Buat pembayaran QRIS / Cash |
 | 25 | GET | `/api/payments/:orderId/status` | Booth-Key | Status pembayaran |
 | 26 | GET | `/api/admin/payments` | JWT | Daftar pembayaran |
-| 27 | POST | `/api/webhooks/midtrans` | Signature | Webhook Midtrans |
-| 28 | POST | `/api/photos` | Booth-Key | Simpan metadata foto |
-| 29 | GET | `/api/photos/session/:sessionId` | Booth-Key | Foto per sesi |
-| 30 | PATCH | `/api/photos/:id/select` | Booth-Key | Pilih/batal pilih foto |
-| 31 | POST | `/api/photos/:id/upload` | Booth-Key | Upload foto |
-| 32 | POST | `/api/gallery` | Booth-Key | Buat galeri |
-| 33 | GET | `/api/gallery/:token` | None (token) | Akses galeri publik |
-| 34 | POST | `/api/delivery/whatsapp` | Booth-Key | Kirim WhatsApp |
-| 35 | GET | `/api/delivery/:id/status` | Booth-Key | Status pengiriman |
-| 36 | GET | `/api/admin/reports/summary` | JWT | Ringkasan laporan |
-| 37 | GET | `/api/admin/reports/transactions` | JWT | Laporan transaksi |
-| 38 | GET | `/api/admin/reports/export/csv` | JWT | Ekspor CSV |
-| 39 | GET | `/api/admin/audit-log` | JWT | Log audit |
-| 40 | GET | `/api/system/version` | Booth-Key | Cek versi & update |
-| 41 | GET | `/api/system/health` | None | Health check |
+| 27 | GET | `/api/admin/cash/pending` | JWT | Antrean transaksi tunai kasir |
+| 28 | POST | `/api/admin/cash/confirm` | Booth-Key/JWT | Konfirmasi pelunasan kasir tunai (PIN) |
+| 29 | GET | `/api/admin/cash/audit-logs` | JWT | Audit log konfirmasi tunai |
+| 30 | POST | `/api/vouchers/validate` | None | Validasi voucher & kalkulasi diskon |
+| 31 | GET | `/api/admin/vouchers` | JWT | Daftar voucher promo |
+| 32 | POST | `/api/admin/vouchers` | JWT | Buat voucher baru |
+| 33 | PUT | `/api/admin/vouchers/:id` | JWT | Update voucher |
+| 34 | DELETE | `/api/admin/vouchers/:id` | JWT | Nonaktifkan voucher |
+| 35 | POST | `/api/webhooks/midtrans` | Signature | Webhook Midtrans |
+| 36 | POST | `/api/photos` | Booth-Key | Simpan metadata foto |
+| 37 | GET | `/api/photos/session/:sessionId` | Booth-Key | Foto per sesi |
+| 38 | PATCH | `/api/photos/:id/select` | Booth-Key | Pilih/batal pilih foto |
+| 39 | POST | `/api/photos/:id/upload` | Booth-Key | Upload foto |
+| 40 | POST | `/api/gallery` | Booth-Key | Buat galeri |
+| 41 | GET | `/api/gallery/:token` | None (token) | Akses galeri publik |
+| 42 | POST | `/api/delivery/whatsapp` | Booth-Key | Kirim WhatsApp |
+| 43 | GET | `/api/delivery/:id/status` | Booth-Key | Status pengiriman |
+| 44 | GET | `/api/admin/reports/summary` | JWT | Ringkasan laporan |
+| 45 | GET | `/api/admin/reports/transactions` | JWT | Laporan transaksi lengkap |
+| 46 | GET | `/api/admin/reports/export/csv` | JWT | Ekspor CSV |
+| 47 | GET | `/api/admin/audit-log` | JWT | Log audit |
+| 48 | GET | `/api/system/version` | Booth-Key | Cek versi & update |
+| 49 | GET | `/api/system/health` | None | Health check |
+| 50 | GET | `/api/printer/list` | None/Booth-Key | Daftar printer Windows terdeteksi & status |
+| 51 | GET | `/api/printer/config` | None/Booth-Key | Konfigurasi printer aktif terpilih |
+| 52 | PUT | `/api/printer/config` | Booth-Key/JWT | Simpan kustomisasi printer, ukuran kertas & margin |
+| 53 | POST | `/api/printer/print` | Booth-Key | Submit antrean cetak 4R silent spooler |
+| 54 | POST | `/api/printer/test` | None/Booth-Key | Uji cetak kalibrasi 4R borderless |
+| 55 | POST | `/api/printer/reprint` | Booth-Key/JWT | Cetak ulang audit log operator |

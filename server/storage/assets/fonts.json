@@ -1,0 +1,82 @@
+[
+  {
+    "id": "plus-jakarta-sans",
+    "name": "Modern Studio",
+    "fontFamily": "Plus Jakarta Sans",
+    "googleFont": "Plus Jakarta Sans:wght@400;700;800",
+    "previewText": "Modern Studio",
+    "isCustom": false,
+    "isActive": true,
+    "createdAt": "2026-10-20T15:16:06.833Z"
+  },
+  {
+    "id": "playfair-display",
+    "name": "Playfair Elegan",
+    "fontFamily": "Playfair Display",
+    "googleFont": "Playfair Display:ital,wght@0,600;0,800;1,600",
+    "previewText": "Elegan & Anggun",
+    "isCustom": false,
+    "isActive": true,
+    "createdAt": "2026-10-20T15:16:06.833Z"
+  },
+  {
+    "id": "dancing-script",
+    "name": "Dancing Script",
+    "fontFamily": "Dancing Script",
+    "googleFont": "Dancing Script:wght@700",
+    "previewText": "Tulisan Sambung",
+    "isCustom": false,
+    "isActive": true,
+    "createdAt": "2026-10-20T15:16:06.833Z"
+  },
+  {
+    "id": "montserrat",
+    "name": "Montserrat Bold",
+    "fontFamily": "Montserrat",
+    "googleFont": "Montserrat:wght@800;900",
+    "previewText": "Tegas & Modern",
+    "isCustom": false,
+    "isActive": true,
+    "createdAt": "2026-10-20T15:16:06.833Z"
+  },
+  {
+    "id": "pacifico",
+    "name": "Pacifico Fun",
+    "fontFamily": "Pacifico",
+    "googleFont": "Pacifico",
+    "previewText": "Ceria & Santai",
+    "isCustom": false,
+    "isActive": true,
+    "createdAt": "2026-10-20T15:16:06.833Z"
+  },
+  {
+    "id": "oswald",
+    "name": "Oswald Solid",
+    "fontFamily": "Oswald",
+    "googleFont": "Oswald:wght@700",
+    "previewText": "Statement Kuat",
+    "isCustom": false,
+    "isActive": true,
+    "createdAt": "2026-10-20T15:16:06.833Z"
+  },
+  {
+    "id": "caveat",
+    "name": "Caveat Santai",
+    "fontFamily": "Caveat",
+    "googleFont": "Caveat:wght@700",
+    "previewText": "Coretan Alami",
+    "isCustom": false,
+    "isActive": true,
+    "createdAt": "2026-10-20T15:16:06.833Z"
+  },
+  {
+    "id": "cinzel",
+    "name": "Cinzel Klasik",
+    "fontFamily": "Cinzel",
+    "googleFont": "Cinzel:wght@700",
+    "previewText": "Klasik Istimewa",
+    "isCustom": false,
+    "isActive": true,
+    "createdAt": "2026-10-20T15:16:06.833Z"
+  }
+]

@@ -28,10 +28,11 @@ release/
 *.db-journal
 *.db-shm
 *.db-wal
-storage/temp/
-storage/photos/
-storage/prints/
-storage/exports/
+**/storage/temp/
+**/storage/photos/
+**/storage/prints/
+**/storage/exports/
+**/storage/galleries/
 
 # Cache IDE & Editor
 .vscode/*

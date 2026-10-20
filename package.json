@@ -1,0 +1,30 @@
+{
+  "name": "minjaphotobooth-workspace",
+  "version": "2.0.0",
+  "private": true,
+  "description": "MinjaPhotobooth Workspace",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -n \"SERVER,FRONTEND\" -c \"blue,green\" \"npm run dev:server\" \"npm run dev:frontend\"",
+    "dev:all": "concurrently -n \"SERVER,FRONTEND\" -c \"blue,green\" \"npm run dev:server\" \"npm run dev:frontend\"",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:server": "npm --prefix server run dev",
+    "dev:electron": "npm run build:electron && electron .",
+    "kiosk": "concurrently -n \"SERVER,FRONTEND,ELECTRON\" -c \"blue,green,magenta\" \"npm run dev:server\" \"npm run dev:frontend\" \"npm run dev:electron\"",
+    "build": "npm --prefix frontend run build && npm --prefix server run build && npm run build:electron",
+    "build:frontend": "npm --prefix frontend run build",
+    "build:server": "npm --prefix server run build",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "test": "npm --prefix server run test",
+    "lint": "npm --prefix frontend run lint && npm --prefix server run lint",
+    "db:push": "npm --prefix server run prisma:push",
+    "db:seed": "npm --prefix server run prisma:seed",
+    "db:studio": "npm --prefix server run prisma:studio"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "concurrently": "^10.0.6",
+    "electron": "^33.2.1",
+    "typescript": "^7.0.2"
+  }
+}

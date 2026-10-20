@@ -1,0 +1,29 @@
+export interface ReportSummary {
+  totalRevenue: number;
+  totalSessions: number;
+  completedSessions: number;
+  failedSessions: number;
+  totalPrints: number;
+  averageSessionDurationSeconds: number;
+  qrisRevenue: number;
+  cashRevenue: number;
+  totalDiscountGiven: number;
+}
+
+export interface TransactionReportItem {
+  id: string;
+  orderId: string;
+  sessionCode: string;
+  packageName: string;
+  paymentMethod: 'qris' | 'cash';
+  subtotal: number; // Harga sebelum diskon
+  voucherCode?: string; // Kode voucher
+  discountAmount: number; // Nilai diskon
+  grossAmount: number; // Total yang dibayar
+  additionalPrints: number;
+  status: 'settlement' | 'pending' | 'expire' | 'cancel' | 'deny';
+  paymentType: string;
+  confirmedBy?: string; // Petugas yang mengonfirmasi cash, jika ada
+  createdAt: string;
+  settlementTime?: string;
+}
